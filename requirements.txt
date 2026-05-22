@@ -1,0 +1,11 @@
+openai
+
+streamlit
+
+pandas
+
+python-dotenv
+
+beautifulsoup4
+
+requests
