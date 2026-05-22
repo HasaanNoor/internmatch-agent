@@ -1,4 +1,3 @@
-import openai
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
@@ -70,5 +69,6 @@ def analyze_eligibility(job_description):
 
     try:
         return json.loads(content)
-    except:
+    except json.JSONDecodeError:
         return content
+    
