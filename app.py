@@ -3,17 +3,13 @@ from src.eligibility_checker import analyze_eligibility
 from src.job_ingestion import JobIngestionError, ingest_job_description
 from src.job_scraper import JobScraperError, scrape_job
 from src.job_summarizer import JobSummarizerError, summarize_job
+from src.tracker import application_exists, load_applications, save_application
 import json
 import traceback
 
 st.title("AI Internship Agent")
 
-company = st.text_input("Company Name")
-role = st.text_input("Job Title")
-location = st.text_input("Location")
-job_url = st.text_input("Job URL")
-
-job_description = st.text_area("Paste Job Description", height=300)
+analysis_tab, tracker_tab = st.tabs(["Analyze Internship", "Applications Tracker"])
 
 
 def display_items(title, items):
@@ -105,48 +101,112 @@ def prepare_job_input(company, role, location, job_url, job_description):
     }
 
 
-if st.button("Analyze Internship"):
+def get_nested_value(data, *keys, default=""):
+    current_value = data
+    for key in keys:
+        if not isinstance(current_value, dict):
+            return default
+        current_value = current_value.get(key)
 
-    if not job_url.strip() and not job_description.strip():
-        st.warning("Please provide a job URL or paste a job description.")
-    else:
-        with st.spinner("Analyzing..."):
-            try:
-                prepared_job = prepare_job_input(company, role, location, job_url, job_description)
-                if prepared_job["warning"]:
-                    st.warning(prepared_job["warning"])
+    return current_value or default
 
-                st.info(f"Using {prepared_job['source']} for this analysis.")
 
-                job_posting = ingest_job_description(
-                    job_description=prepared_job["job_description"],
-                    company=prepared_job["company"],
-                    title=prepared_job["role"],
-                    location=prepared_job["location"],
-                    job_url=prepared_job["job_url"],
-                )
-                summary = summarize_job(job_posting)
-                st.write(summary)
-                st.write(job_posting)
-                result = analyze_eligibility(prepared_job["job_description"])
+def build_application_record(prepared_job, summary, eligibility_result):
+    ai_ds_alignment = ""
+    visa_risk = ""
 
-                display_job_summary(summary)
+    if isinstance(eligibility_result, dict):
+        ai_ds_alignment = eligibility_result.get("AI_DS_Alignment", "")
+        visa_risk = eligibility_result.get("Risk_Level", "")
 
-                st.subheader("Eligibility Analysis")
+    if not ai_ds_alignment:
+        ai_ds_alignment = get_nested_value(summary, "ai_data_science_relevance", "level")
 
-                if isinstance(result, dict):
-                    for key, value in result.items():
-                        st.markdown(f"**{key.replace('_', ' ')}:** {value}")
+    return {
+        "company": summary.get("company") or prepared_job["company"],
+        "title": summary.get("title") or prepared_job["role"],
+        "location": summary.get("location") or prepared_job["location"],
+        "url": prepared_job["job_url"],
+        "fit_score": summary.get("fit_score", ""),
+        "ai_ds_alignment": ai_ds_alignment,
+        "visa_risk": visa_risk,
+        "recommended_action": summary.get("recommended_action", ""),
+        "application_status": "Saved",
+        "notes": "",
+    }
 
-                else:
-                    st.write(result)
 
-            except (JobIngestionError, JobScraperError, JobSummarizerError) as e:
+with analysis_tab:
+    company = st.text_input("Company Name")
+    role = st.text_input("Job Title")
+    location = st.text_input("Location")
+    job_url = st.text_input("Job URL")
 
-                st.error(str(e))
+    job_description = st.text_area("Paste Job Description", height=300)
 
-            except Exception as e:
+    if st.button("Analyze Internship"):
 
-                st.error("Something went wrong while analyzing the internship.")
+        if not job_url.strip() and not job_description.strip():
+            st.warning("Please provide a job URL or paste a job description.")
+        else:
+            with st.spinner("Analyzing..."):
+                try:
+                    prepared_job = prepare_job_input(company, role, location, job_url, job_description)
+                    if prepared_job["warning"]:
+                        st.warning(prepared_job["warning"])
 
-                st.code(traceback.format_exc())
+                    st.info(f"Using {prepared_job['source']} for this analysis.")
+
+                    job_posting = ingest_job_description(
+                        job_description=prepared_job["job_description"],
+                        company=prepared_job["company"],
+                        title=prepared_job["role"],
+                        location=prepared_job["location"],
+                        job_url=prepared_job["job_url"],
+                    )
+                    summary = summarize_job(job_posting)
+                    st.write(summary)
+                    st.write(job_posting)
+                    result = analyze_eligibility(prepared_job["job_description"])
+
+                    display_job_summary(summary)
+
+                    st.subheader("Eligibility Analysis")
+
+                    if isinstance(result, dict):
+                        for key, value in result.items():
+                            st.markdown(f"**{key.replace('_', ' ')}:** {value}")
+
+                    else:
+                        st.write(result)
+
+                    st.session_state["last_analyzed_application"] = build_application_record(
+                        prepared_job,
+                        summary,
+                        result,
+                    )
+
+                except (JobIngestionError, JobScraperError, JobSummarizerError) as e:
+
+                    st.error(str(e))
+
+                except Exception as e:
+
+                    st.error("Something went wrong while analyzing the internship.")
+
+                    st.code(traceback.format_exc())
+
+    if "last_analyzed_application" in st.session_state:
+        application = st.session_state["last_analyzed_application"]
+        if st.button("Save Job"):
+            if application_exists(application["url"]):
+                st.info("This job is already saved in the applications tracker.")
+            elif save_application(**application):
+                st.success("Job saved to applications tracker.")
+            else:
+                st.info("This job is already saved in the applications tracker.")
+
+
+with tracker_tab:
+    st.subheader("Applications Tracker")
+    st.dataframe(load_applications(), use_container_width=True)
